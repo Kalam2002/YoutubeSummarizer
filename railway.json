@@ -1,13 +1,6 @@
 {
   "build": {
-<<<<<<< HEAD
     "builder": "NIXPACKS"
   },
   "start": "uvicorn backend.app:app --host 0.0.0.0 --port 8000"
-=======
-    "builder": "NIXPACKS",
-    "buildCommand": "pip install -r backend/requirements.txt",
-    "startCommand": "uvicorn app:app --host 0.0.0.0 --port $PORT"
-  }
->>>>>>> 46085305a0e5faf6921f7fa510ba87c0998a6dd6
 }
