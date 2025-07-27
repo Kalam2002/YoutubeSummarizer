@@ -23,10 +23,12 @@ def extract_youtube_id(url: str) -> str:
 
 def get_transcript(video_id: str) -> str:
     try:
+        # The correct way to call the library
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([d['text'] for d in transcript_list])
     except Exception as e:
-        raise Exception(f"Could not retrieve transcript: {e}")
+        # This will catch errors if a transcript doesn't exist for the video
+        raise Exception(f"Could not retrieve transcript for video ID {video_id}: {e}")
 
 def summarize_with_gemini(transcript_text: str) -> dict:
     if not GEMINI_API_KEY:
