@@ -25,35 +25,13 @@ def extract_youtube_id(url: str) -> str:
 
 # Get best available transcript (corrected API call)
 def get_best_transcript(video_id: str) -> str:
-    # This is the correct way to call the library
-    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-    transcript = None
-
     try:
-        transcript = transcript_list.find_manually_created_transcript(['en'])
-    except:
-        pass
-
-    if transcript is None:
-        try:
-            transcript = transcript_list.find_generated_transcript(['en'])
-        except:
-            pass
-
-    if transcript is None:
-        try:
-            for t in transcript_list:
-                if t.is_translatable:
-                    transcript = t.translate('en')
-                    break
-        except:
-            pass
-    
-    if transcript is None:
-        raise Exception("No usable transcript found.")
-
-    entries = transcript.fetch()
-    return " ".join([entry['text'] for entry in entries])
+        # This is the correct method call
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+        return " ".join([entry['text'] for entry in transcript_list])
+    except Exception as e:
+        # This will catch errors if an English transcript doesn't exist
+        raise Exception(f"Could not retrieve English transcript for video ID {video_id}: {e}")
 
 # Call Gemini API to summarize the transcript
 def summarize_with_gemini(transcript_text: str) -> dict:
