@@ -6,35 +6,61 @@ from fastapi.responses import JSONResponse
 import json
 
 # --- Configure API Key ---
-# Vercel will get this from your project's Environment Variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # Initialize FastAPI app
 app = FastAPI()
 
 # --- Helper Functions ---
+
+# Extract video ID from standard YouTube URLs
 def extract_youtube_id(url: str) -> str:
-    if "youtu.be" in url:
-        return url.split("/")[-1].split("?")[0]
-    elif "youtube.com" in url:
+    if "watch?v=" in url:
         return url.split("v=")[1].split("&")[0]
-    raise ValueError("Invalid YouTube URL")
+    elif "youtu.be/" in url:
+        return url.split("/")[-1].split("?")[0]
+    raise ValueError("Invalid YouTube URL format")
 
-def get_transcript(video_id: str) -> str:
+# Get best available transcript (corrected API call)
+def get_best_transcript(video_id: str) -> str:
+    # This is the correct way to call the library
+    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+    transcript = None
+
     try:
-        # The correct way to call the library
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        return " ".join([d['text'] for d in transcript_list])
-    except Exception as e:
-        # This will catch errors if a transcript doesn't exist for the video
-        raise Exception(f"Could not retrieve transcript for video ID {video_id}: {e}")
+        transcript = transcript_list.find_manually_created_transcript(['en'])
+    except:
+        pass
 
+    if transcript is None:
+        try:
+            transcript = transcript_list.find_generated_transcript(['en'])
+        except:
+            pass
+
+    if transcript is None:
+        try:
+            for t in transcript_list:
+                if t.is_translatable:
+                    transcript = t.translate('en')
+                    break
+        except:
+            pass
+    
+    if transcript is None:
+        raise Exception("No usable transcript found.")
+
+    entries = transcript.fetch()
+    return " ".join([entry['text'] for entry in entries])
+
+# Call Gemini API to summarize the transcript
 def summarize_with_gemini(transcript_text: str) -> dict:
     if not GEMINI_API_KEY:
         raise Exception("Gemini API key not set in environment.")
 
-    model = genai.GenerativeModel('gemini-1.5-flash') # Using a standard, efficient model
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""Based on the following YouTube transcript, return a brief summary in this JSON format only:
     {{
@@ -43,14 +69,13 @@ def summarize_with_gemini(transcript_text: str) -> dict:
     }}
 
     Transcript:
-    \"\"\"
+    \"\"\" 
     {transcript_text}
     \"\"\""""
 
     response = model.generate_content(prompt)
     raw_text = response.text.strip()
 
-    # Clean the response if it's wrapped in markdown
     if raw_text.startswith("```json"):
         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
@@ -64,15 +89,15 @@ def summarize_with_gemini(transcript_text: str) -> dict:
 # A simple root endpoint to check if the server is running
 @app.get("/")
 def read_root():
-    return {"status": "API is running"}
+    return {"status": "API is running. Use the /summarize endpoint."}
 
-# The main endpoint for summarization
+# The main endpoint for summarization, updated for Vercel routing
 @app.get("/summarize")
-def get_summary_endpoint(url: str = Query(..., description="YouTube video URL")):
+def get_summary(url: str = Query(..., description="YouTube video URL")):
     try:
         video_id = extract_youtube_id(url)
-        transcript = get_transcript(video_id)
-        summary = summarize_with_gemini(transcript)
+        transcript_text = get_best_transcript(video_id)
+        summary = summarize_with_gemini(transcript_text)
         return summary
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
