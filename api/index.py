@@ -1,121 +1,76 @@
 import os
 from youtube_transcript_api import YouTubeTranscriptApi
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
+import google.generativeai as genai
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
-import json 
+import json
 
-# Load environment variables
-load_dotenv()
+# --- Configure API Key ---
+# Vercel will get this from your project's Environment Variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
 
 # Initialize FastAPI app
 app = FastAPI()
 
-# Extract video ID from YouTube URL
+# --- Helper Functions ---
 def extract_youtube_id(url: str) -> str:
-    if "youtube.com/watch?v=" in url:
+    if "youtu.be" in url:
+        return url.split("/")[-1].split("?")[0]
+    elif "youtube.com" in url:
         return url.split("v=")[1].split("&")[0]
-    elif "youtu.be/" in url:
-        return url.split("/")[-1]
-    else:
-        raise ValueError("❌ Invalid YouTube URL")
+    raise ValueError("Invalid YouTube URL")
 
-# Get best available transcript (manual, auto, or translated)
-def get_best_transcript(video_id: str) -> str:
-    api = YouTubeTranscriptApi()
-    transcript_list = api.list(video_id)
-    transcript = None
-
+def get_transcript(video_id: str) -> str:
     try:
-        transcript = transcript_list.find_manually_created_transcript(['en'])
-        print("✅ Using manually created English transcript.")
-    except:
-        pass
-
-    if transcript is None:
-        try:
-            transcript = transcript_list.find_generated_transcript(['en'])
-            print("⚠️ Using auto-generated English transcript.")
-        except:
-            pass
-
-    if transcript is None:
-        for t in transcript_list:
-            if 'en' in [lang['language_code'] for lang in t.translation_languages]:
-                print(f"🌐 Using {t.language_code} transcript and translating to English...")
-                transcript = t.translate('en')
-                break
-
-    if transcript is None:
-        raise Exception("❌ No usable transcript found.")
-
-    entries = transcript.fetch()
-    full_text = "\n".join(entry.text for entry in entries)
-    return full_text
-
-# Call Gemini API to summarize the transcript
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join([d['text'] for d in transcript_list])
+    except Exception as e:
+        raise Exception(f"Could not retrieve transcript: {e}")
 
 def summarize_with_gemini(transcript_text: str) -> dict:
     if not GEMINI_API_KEY:
-        raise Exception("❌ Gemini API key not set in environment.")
+        raise Exception("Gemini API key not set in environment.")
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    model = "gemini-2.5-pro"
-
+    model = genai.GenerativeModel('gemini-1.5-flash') # Using a standard, efficient model
+    
     prompt = f"""Based on the following YouTube transcript, return a brief summary in this JSON format only:
-{{
-  "topic_name": "name of topic",
-  "topic_summary": "summary of topic"
-}}
+    {{
+      "topic_name": "name of topic",
+      "topic_summary": "summary of topic"
+    }}
 
-Transcript:
-\"\"\" 
-{transcript_text}
-\"\"\""""
+    Transcript:
+    \"\"\"
+    {transcript_text}
+    \"\"\""""
 
-    contents = [
-        types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-    ]
-
-    config = types.GenerateContentConfig(
-        temperature=0.6,
-        thinking_config=types.ThinkingConfig(thinking_budget=-1),
-        response_mime_type="text/plain",
-    )
-
-    response = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=config,
-    )
-
+    response = model.generate_content(prompt)
     raw_text = response.text.strip()
 
-    # ✅ Remove Markdown code fences
+    # Clean the response if it's wrapped in markdown
     if raw_text.startswith("```json"):
         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
     try:
-        parsed = json.loads(raw_text)
-        return parsed  # ✅ Proper dictionary
+        return json.loads(raw_text)
     except json.JSONDecodeError as e:
-        raise Exception(f"❌ Failed to parse Gemini response as JSON: {e}\nRaw response: {raw_text}")
+        raise Exception(f"Failed to parse Gemini response as JSON: {e}\nRaw response: {raw_text}")
 
+# --- FastAPI Endpoints ---
 
-    # Gemini outputs plain JSON text
-    return response.text
+# A simple root endpoint to check if the server is running
+@app.get("/")
+def read_root():
+    return {"status": "API is running"}
 
-# FastAPI GET endpoint
+# The main endpoint for summarization
 @app.get("/summarize")
-def get_summary(url: str = Query(..., description="YouTube video URL")):
+def get_summary_endpoint(url: str = Query(..., description="YouTube video URL")):
     try:
         video_id = extract_youtube_id(url)
-        transcript_text = get_best_transcript(video_id)
-        summary = summarize_with_gemini(transcript_text)
+        transcript = get_transcript(video_id)
+        summary = summarize_with_gemini(transcript)
         return summary
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
