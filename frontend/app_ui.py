@@ -180,7 +180,7 @@ if st.button("✨ Summarize Video"):
     else:
         with st.spinner("🔄 Analyzing video content..."):
             try:
-                response = requests.get("https://youtubesummarizer-backend.onrender.com/summarize", params={"url": youtube_url})
+                response = requests.get("http://localhost:8000/summarize?", params={"url": youtube_url})
                 if response.status_code == 200:
                     data = response.json()
                     st.markdown("""<div class="success-container">✅ <strong>Summary Generated Successfully!</strong></div>""", unsafe_allow_html=True)

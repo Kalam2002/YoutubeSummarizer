@@ -1,31 +1,30 @@
 import os
-from youtube_transcript_api import YouTubeTranscriptApi
-import google.generativeai as genai
+import json
+from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
-import json 
+from youtube_transcript_api import YouTubeTranscriptApi
+from google import genai
+from google.genai import types
+from mangum import Mangum  # 🔥 Required for Vercel deployment
 
 # Load environment variables
+load_dotenv()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Your original URL extraction function
 def extract_youtube_id(url: str) -> str:
-    if "watch?v=" in url:
-        return url.split("v=")[1].split("&")[0]
+    if "youtube.com/watch?v=" in url:
+        return url.split("v=")[1].split("&")[0].split("?")[0]
     elif "youtu.be/" in url:
-        return url.split("/")[-1].split("?")[0]
+        return url.split("/")[-1].split("?")[0].split("&")[0]
     else:
         raise ValueError("❌ Invalid YouTube URL")
 
-# Your original transcript function with the corrected API call
 def get_best_transcript(video_id: str) -> str:
-    # This is the correct way to call the library, without creating an instance
-    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+    api = YouTubeTranscriptApi()
+    transcript_list = api.list(video_id)
     transcript = None
 
     try:
@@ -43,44 +42,53 @@ def get_best_transcript(video_id: str) -> str:
 
     if transcript is None:
         for t in transcript_list:
-            if t.is_translatable:
-                try:
-                    transcript = t.translate('en')
-                    print(f"🌐 Using {t.language_code} transcript and translating to English...")
-                    break
-                except:
-                    continue
+            if 'en' in [lang['language_code'] for lang in t.translation_languages]:
+                print(f"🌐 Using {t.language_code} transcript and translating to English...")
+                transcript = t.translate('en')
+                break
 
     if transcript is None:
         raise Exception("❌ No usable transcript found.")
 
     entries = transcript.fetch()
-    # THE FIX: The library returns a dictionary, so use entry['text']
-    full_text = "\n".join(entry['text'] for entry in entries)
+    full_text = "\n".join(entry.text for entry in entries)
     return full_text
 
-# Your original Gemini function, updated to the current stable method
 def summarize_with_gemini(transcript_text: str) -> dict:
     if not GEMINI_API_KEY:
         raise Exception("❌ Gemini API key not set in environment.")
-    
-    # This is the current, reliable way to call the Gemini API
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    model = "gemini-2.5-pro"
+
     prompt = f"""Based on the following YouTube transcript, return a brief summary in this JSON format only:
-    {{
-      "topic_name": "name of topic",
-      "topic_summary": "summary of topic"
-    }}
+{{
+  "topic_name": "name of topic",
+  "topic_summary": "summary of topic"
+}}
 
-    Transcript:
-    \"\"\" 
-    {transcript_text}
-    \"\"\""""
+Transcript:
+\"\"\" 
+{transcript_text}
+\"\"\""""
 
-    response = model.generate_content(prompt)
+    contents = [
+        types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+    ]
+
+    config = types.GenerateContentConfig(
+        temperature=0.6,
+        thinking_config=types.ThinkingConfig(thinking_budget=-1),
+        response_mime_type="text/plain",
+    )
+
+    response = client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=config,
+    )
+
     raw_text = response.text.strip()
-
     if raw_text.startswith("```json"):
         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
@@ -90,7 +98,6 @@ def summarize_with_gemini(transcript_text: str) -> dict:
     except json.JSONDecodeError as e:
         raise Exception(f"❌ Failed to parse Gemini response as JSON: {e}\nRaw response: {raw_text}")
 
-# Your original endpoint
 @app.get("/summarize")
 def get_summary(url: str = Query(..., description="YouTube video URL")):
     try:
@@ -101,7 +108,5 @@ def get_summary(url: str = Query(..., description="YouTube video URL")):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-# Optional root endpoint for basic testing
-@app.get("/")
-def read_root():
-    return {"status": "API is running"}
+# ✅ Required for Vercel
+handler = Mangum(app)
