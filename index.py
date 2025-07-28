@@ -4,7 +4,6 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
-from mangum import Mangum
 import json
 
 # Load environment variables
@@ -96,5 +95,3 @@ def get_summary(url: str = Query(..., description="YouTube video URL")):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-# ✅ Needed for Vercel
-handler = Mangum(app)
