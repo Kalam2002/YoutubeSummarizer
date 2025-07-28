@@ -1,9 +1,11 @@
 import os
 from youtube_transcript_api import YouTubeTranscriptApi
 import google.generativeai as genai
+from google.generativeai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from mangum import Mangum
 import json
 
 # Load environment variables
@@ -45,14 +47,15 @@ def get_best_transcript(video_id: str) -> str:
         raise Exception("❌ No usable transcript found.")
 
     entries = transcript.fetch()
-    return "\n".join(entry.text for entry in entries)
+    return "\n".join(entry['text'] for entry in entries)
 
 def summarize_with_gemini(transcript_text: str) -> dict:
     if not GEMINI_API_KEY:
         raise Exception("❌ Gemini API key not set.")
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    model = "gemini-2.5-pro"
+    genai.configure(api_key=GEMINI_API_KEY)
+
+    model = genai.GenerativeModel("gemini-1.5-pro")
 
     prompt = f"""Return a brief JSON summary:
 {{
@@ -61,22 +64,13 @@ def summarize_with_gemini(transcript_text: str) -> dict:
 }}
 
 Transcript:
-\"\"\" 
+\"\"\"
 {transcript_text}
 \"\"\""""
 
-    contents = [types.Content(role="user", parts=[types.Part.from_text(prompt)])]
-    config = types.GenerateContentConfig(
-        temperature=0.6,
-        thinking_config=types.ThinkingConfig(thinking_budget=-1),
-        response_mime_type="text/plain"
-    )
-
-    response = client.models.generate_content(
-        model=model, contents=contents, config=config
-    )
-
+    response = model.generate_content(prompt)
     raw_text = response.text.strip()
+
     if raw_text.startswith("```json"):
         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
@@ -95,3 +89,5 @@ def get_summary(url: str = Query(..., description="YouTube video URL")):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+# Required for Vercel (serverless handler)
+handler = Mangum(app)
