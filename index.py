@@ -1,7 +1,7 @@
 import os
 from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
-from google.genai import types
+from google.generativeai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
