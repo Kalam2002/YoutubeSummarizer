@@ -88,6 +88,3 @@ def get_summary(url: str = Query(..., description="YouTube video URL")):
         return summary
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
-# Required for Vercel (serverless handler)
-handler = Mangum(app)
